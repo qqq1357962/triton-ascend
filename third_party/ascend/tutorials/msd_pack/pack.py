@@ -18,14 +18,32 @@ def _pack_msd(X, Y, K: tl.constexpr, BLOCK: tl.constexpr):
     src = X + row * (K // 2)
     dst = Y + row * (K // 2)
 
-    a = tl.load(src + 2 * offsets, offsets < width, 0)
-    b = tl.load(src + 2 * offsets + 1, offsets < width, 0)
+    # Divisible rows need no runtime branch. Otherwise only the final tile
+    # needs masking. The wrapper launches exactly ceil(width / BLOCK) tiles.
+    if width % BLOCK == 0:
+        a = tl.load(src + 2 * offsets)
+        b = tl.load(src + 2 * offsets + 1)
+    else:
+        if tile < width // BLOCK:
+            a = tl.load(src + 2 * offsets)
+            b = tl.load(src + 2 * offsets + 1)
+        else:
+            a = tl.load(src + 2 * offsets, offsets < width, 0)
+            b = tl.load(src + 2 * offsets + 1, offsets < width, 0)
 
     hi = ((a >> 4) & 15) | ((a >> 8) & 240) | ((b << 4) & 3840) | (b & 61440)
     lo = ((a & 15) | ((a >> 4) & 240) | ((b << 8) & 3840) | ((b << 4) & 61440)) ^ 34952
 
-    tl.store(dst + offsets, hi, offsets < width)
-    tl.store(dst + width + offsets, lo, offsets < width)
+    if width % BLOCK == 0:
+        tl.store(dst + offsets, hi)
+        tl.store(dst + width + offsets, lo)
+    else:
+        if tile < width // BLOCK:
+            tl.store(dst + offsets, hi)
+            tl.store(dst + width + offsets, lo)
+        else:
+            tl.store(dst + offsets, hi, offsets < width)
+            tl.store(dst + width + offsets, lo, offsets < width)
 
 
 def pack_msd(x: torch.Tensor, *, out: torch.Tensor | None = None, block_size: int = 1024):

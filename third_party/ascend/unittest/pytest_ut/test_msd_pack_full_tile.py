@@ -10,10 +10,12 @@ pytest.importorskip("triton")
 # Load the example by path so tests also work from the unittest directory.
 import importlib.util
 from pathlib import Path
+import sys
 
 _example = Path(__file__).resolve().parents[2] / "tutorials/msd_pack/pack.py"
 _spec = importlib.util.spec_from_file_location("msd_pack_full_tile_example", _example)
 _module = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = _module
 _spec.loader.exec_module(_module)
 pack_msd = _module.pack_msd
 
@@ -68,6 +70,19 @@ def test_all_uint16_codes():
     # All 65536 single-carrier codes, not every possible pair of carriers.
     cpu = torch.from_numpy(np.arange(65536, dtype=np.uint16).view(np.uint8).copy()).reshape(32, 4096)
     np.testing.assert_array_equal(pack_msd(cpu.npu()).cpu().numpy(), reference(cpu))
+
+
+def test_nonzero_aligned_offsets():
+    cpu = torch.from_numpy(np.arange(8 * 4100, dtype=np.uint16).astype(np.uint8)).reshape(8, 4100)
+    x_storage = torch.empty((cpu.numel() + 128,), dtype=torch.uint8, device="npu")
+    x = x_storage[64:-64].reshape(cpu.shape)
+    x.copy_(cpu)
+    y_storage = torch.full_like(x_storage, 85)
+    out = y_storage[64:-64].reshape(cpu.shape)
+    pack_msd(x, out=out)
+    np.testing.assert_array_equal(out.cpu().numpy(), reference(cpu))
+    np.testing.assert_array_equal(y_storage[:64].cpu().numpy(), np.full(64, 85))
+    np.testing.assert_array_equal(y_storage[-64:].cpu().numpy(), np.full(64, 85))
 
 
 def test_invalid_format_and_alias():
